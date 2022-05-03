@@ -1,0 +1,224 @@
+## Importing the Required Packages
+%pylab inline
+import os
+import numpy as np 
+import pandas as pd
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers, models, optimizers
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.layers.experimental.preprocessing import Rescaling
+from sklearn.utils import class_weight
+from sklearn.metrics import confusion_matrix, classification_report
+print("tensorflow", tf.__version__)
+
+## Dataset
+
+train_dir = '../input/chest-xray-pneumonia/chest_xray/train'
+test_dir = '../input/chest-xray-pneumonia/chest_xray/test'
+val_dir = '../input/chest-xray-pneumonia/chest_xray/val'
+
+# Count normal and pneumonia samples for each dataset
+num_train_normal = len(os.listdir(os.path.join(train_dir, 'NORMAL')))
+num_train_pneumonia = len(os.listdir(os.path.join(train_dir, 'PNEUMONIA')))
+print("Train set:")
+print(f"Normal:    {num_train_normal}")
+print(f"Pneumonia: {num_train_pneumonia}")
+
+num_test_normal = len(os.listdir(os.path.join(test_dir, 'NORMAL')))
+num_test_pneumonia = len(os.listdir(os.path.join(test_dir, 'PNEUMONIA')))
+print("\nTest set:")
+print(f"Normal:    {num_test_normal}")
+print(f"Pneumonia: {num_test_pneumonia}")
+
+## Visualize the Xray Images
+
+normal_dir = os.path.join(train_dir, 'NORMAL')
+normal = os.listdir(normal_dir)
+
+plt.figure(figsize=(10, 10))
+for i in range(3):
+    plt.subplot(1, 3, i + 1)
+    img = plt.imread(os.path.join(normal_dir, normal[i]))
+    plt.imshow(img)
+    plt.title('Normal')
+
+pneumonia_dir = os.path.join(train_dir, 'PNEUMONIA')
+pneumonia = os.listdir(pneumonia_dir)
+
+plt.figure(figsize=(10, 10))
+for i in range(3):
+    plt.subplot(1, 3, i + 1)
+    img = plt.imread(os.path.join(pneumonia_dir, pneumonia[i]))
+    plt.imshow(img)
+    plt.title('Pneumonia')
+    
+## Preprocessing
+# This block is for raising brightness and contrast for future experiment
+img_01 = '../input/chest-xray-pneumonia/chest_xray/test/NORMAL/IM-0001-0001.jpeg'
+imggg = plt.imread(img_01)
+
+imggg_3d = tf.expand_dims(imggg,2)
+
+brighten = tf.image.adjust_brightness(imggg_3d, delta=0.2)
+contrasten = tf.image.adjust_contrast(imggg_3d, 2.)
+print(imggg.shape, imggg_3d.shape)
+
+plt.imshow(imggg)
+plt.title("Original img")
+plt.show()
+
+plt.imshow(brighten)
+plt.title("Brightened img")
+plt.show()
+
+plt.imshow(contrasten)
+plt.title("Contranst enhanced img")
+plt.show()
+
+# Training settings
+
+BATCH_SIZE = 32
+IMG_HEIGHT, IMG_WIDTH = 240, 240
+IMG_SIZE = (IMG_HEIGHT, IMG_WIDTH)
+
+N = 10           # epoch
+STEPS_PER_EPOCH = 4173 / BATCH_SIZE
+VALIDATION_STEPS = 1043 / BATCH_SIZE
+
+##Use ImageDataGenerator for preprocessing and augmenting data.
+
+#rescale: Rescale pixel value into 0-1.
+#rotation_range: Rotate image for random degree range.
+#width_shift_range: Shift image horizontally.
+#height_shift_range: Shift image vertically.
+#shear_range: Shear angle in counter-clockwise direction in degrees.
+#zoom_range: Zoom for random range.
+
+def custom_augmentation(np_tensor):
+ 
+    def random_contrast(np_tensor):
+        return tf.image.random_contrast(np_tensor, 0.5, 2)
+
+    augmnted_tensor = random_contrast(np_tensor)
+    return np.array(augmnted_tensor)
+
+train_datagen = ImageDataGenerator(rescale = 1./255,
+                                   rotation_range = 20,
+                                   width_shift_range = 0.2,
+                                   height_shift_range = 0.2,
+                                   shear_range = 0.2,
+                                   zoom_range = 0.2,
+                                   brightness_range = (1, 1.2),
+                                   preprocessing_function=custom_augmentation,
+                                   validation_split = 0.2)
+
+test_datagen = ImageDataGenerator(rescale = 1./255)
+METRICS = ['accuracy']
+def custom_augmentation(np_tensor):
+ 
+    def random_contrast(np_tensor):
+        return tf.image.random_contrast(np_tensor, 0.5, 2)
+
+    augmnted_tensor = random_contrast(np_tensor)
+    return np.array(augmnted_tensor)
+
+train_datagen = ImageDataGenerator(rescale = 1./255,
+                                   rotation_range = 20,
+                                   width_shift_range = 0.2,
+                                   height_shift_range = 0.2,
+                                   shear_range = 0.2,
+                                   zoom_range = 0.2,
+                                   brightness_range = (1, 1.2),
+                                   preprocessing_function=custom_augmentation,
+                                   validation_split = 0.2)
+
+test_datagen = ImageDataGenerator(rescale = 1./255)
+Iterate through dataset directories and prepare data.
+
+train_ds = train_datagen.flow_from_directory(train_dir,
+                                             subset = "training",
+                                             class_mode = 'binary',
+#                                              shuffle = True,
+                                             seed = 123,
+                                             target_size = IMG_SIZE,
+                                             batch_size = BATCH_SIZE)
+
+val_ds = train_datagen.flow_from_directory(train_dir,
+                                           subset = "validation",
+                                           class_mode = 'binary',
+                                           shuffle = False,
+                                           seed = 123,
+                                           target_size = IMG_SIZE,
+                                           batch_size = BATCH_SIZE)
+
+test_ds = test_datagen.flow_from_directory(test_dir,
+                                           class_mode = 'binary',
+                                           shuffle = False,
+                                           target_size = IMG_SIZE,
+                                           batch_size = BATCH_SIZE)
+##Model 1 - Simple CNN model
+
+model_1 = Sequential([
+#     layers.experimental.preprocessing.RandomContrast(factor=0.2, input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+
+    layers.Conv2D(64, 3, padding='same', activation='relu', input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+    layers.BatchNormalization(),
+#     layers.Conv2D(32, 3, padding='same', activation='relu'),
+#     layers.BatchNormalization(),
+    layers.MaxPooling2D(),
+    
+#     layers.Conv2D(64, 3, padding='same', activation='relu'),
+#     layers.BatchNormalization(),
+    layers.Conv2D(128, 3, padding='same', activation='relu'),
+    layers.BatchNormalization(),
+    layers.MaxPooling2D(),
+    
+#     layers.Conv2D(128, 3, padding='same', activation='relu'),
+#     layers.BatchNormalization(),
+    layers.Conv2D(256, 3, padding='same', activation='relu'),
+    layers.BatchNormalization(),
+    layers.MaxPooling2D(),
+    
+    layers.Flatten(),
+    layers.Dense(512, activation='relu'),
+    layers.Dropout(0.2),
+    layers.Dense(128, activation='relu'),
+    layers.Dropout(0.2),
+
+    layers.Dense(1, activation = 'sigmoid')
+])
+
+model_1.compile(optimizer = optimizers.RMSprop(learning_rate = 1e-4),
+                loss = 'binary_crossentropy',
+                metrics = METRICS)
+model_1.summary()
+
+checkpoint_filepath = "model_1_{epoch:02d}-{val_accuracy:.2f}.hdf5"
+
+checkpoint_model_1 = ModelCheckpoint(filepath=os.path.join("./case2/checkpoint", checkpoint_filepath), 
+                                     monitor='val_accuracy',
+                                     verbose=0, 
+                                     save_best_only=True)
+callbacks_1 = [checkpoint_model_1]
+%%time
+
+h1 = model_1.fit(train_ds,
+                validation_data = val_ds,
+                batch_size = BATCH_SIZE,
+                steps_per_epoch = STEPS_PER_EPOCH,
+                validation_steps = VALIDATION_STEPS,
+                 class_weight = class_weights,
+                verbose = 1, # FOR FINAL VERSION, CHANGE TO 0!
+                epochs = N,
+                callbacks = checkpoint_model_1)
+
+model_filepath = os.path.join("./case2/model", "model_1.h5")
+model_1.save(model_filepath)
+
+print(f"Mean Loss:         {np.array(h1.history['loss']).mean()}")
+print(f"Mean Accuracy:     {np.array(h1.history['accuracy']).mean()}")
+print(f"Mean Val-Loss:     {np.array(h1.history['val_loss']).mean()}")
+print(f"Mean Val-Accuracy: {np.array(h1.history['val_accuracy']).mean()}")
